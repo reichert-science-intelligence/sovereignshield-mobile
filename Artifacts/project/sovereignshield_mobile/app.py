@@ -1,0 +1,566 @@
+"""
+SovereignShield Mobile — mobile-first Shiny for Python sovereign cloud compliance app.
+Mirrors StarGuard Mobile layout/CSS. Port 7860. Launch: shiny run app.py --host 0.0.0.0 --port 7860
+"""
+from __future__ import annotations
+
+import base64
+import io
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
+# Graceful import fallback — run with simulated data if any module fails
+_USE_REAL_MODULES = True
+try:
+    from project.sovereignshield_mobile.core.opa_eval import evaluate, Violation
+    from project.sovereignshield_mobile.core.audit_db import db
+    from project.sovereignshield_mobile.agents.planner import planner
+    from project.sovereignshield_mobile.agents.worker import worker
+    from project.sovereignshield_mobile.agents.reviewer import reviewer
+    from project.sovereignshield_mobile.rag.retriever import embed_and_store, retrieve_similar
+    from project.sovereignshield_mobile.core.tf_parser import CloudResource  # type: ignore[assignment]
+except ImportError:
+    _USE_REAL_MODULES = False
+    evaluate = None  # type: ignore[assignment]
+    db = None  # type: ignore[assignment]
+    planner = None  # type: ignore[assignment]
+    worker = None  # type: ignore[assignment]
+    reviewer = None  # type: ignore[assignment]
+    embed_and_store = None  # type: ignore[assignment]
+    retrieve_similar = None  # type: ignore[assignment]
+    Violation = dict  # type: ignore[misc, assignment]
+
+# CloudResource from models (tf_parser imports LegacyCloudResource, not CloudResource)
+from project.sovereignshield_mobile.models import CloudResource
+
+try:
+    from shiny import App, reactive, render, ui
+except ImportError:
+    raise ImportError("shiny is required. Run: pip install shiny")
+
+from datetime import datetime
+
+# Full 5-resource catalogue (same as desktop)
+RESOURCES: list[CloudResource] = [
+    CloudResource(
+        resource_id="s3-phi-claims-001",
+        resource_type="aws_s3_bucket",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-001",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="s3-staging-analytics",
+        resource_type="aws_s3_bucket",
+        region="eu-central-1",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=False,
+        tags={"Environment": "staging"},
+    ),
+    CloudResource(
+        resource_id="rds-member-records",
+        resource_type="aws_db_instance",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-002",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="rds-dev-sandbox",
+        resource_type="aws_db_instance",
+        region="us-west-2",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=True,
+        tags={"Environment": "dev"},
+    ),
+    CloudResource(
+        resource_id="lambda-eligibility",
+        resource_type="aws_lambda_function",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-003",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+]
+
+# Seed events for fallback when db unavailable
+_SEED_EVENTS: list[dict[str, Any]] = [
+    {
+        "task_id": "seed-001",
+        "timestamp": "2025-03-09T12:00:00",
+        "violation_type": "data_residency",
+        "resource_id": "s3-staging-analytics",
+        "severity": "HIGH",
+        "planner_output": "Add CMK encryption and region constraint",
+        "worker_output": 'resource "aws_s3_bucket_server_side_encryption_configuration" ...',
+        "reviewer_verdict": "APPROVED",
+        "reviewer_notes": "Compliant",
+        "is_compliant": True,
+        "mttr_seconds": 4.2,
+        "tokens_used": 646,
+        "rag_hit": False,
+    },
+]
+
+
+def _highest_severity(violations: list[dict[str, Any]]) -> str:
+    """Return highest severity among violations. HIGH > MEDIUM > LOW > INFO."""
+    order: dict[str, int] = {"HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
+    best = "INFO"
+    for v in violations:
+        s = str(v.get("severity", "INFO")).upper().strip()
+        if order.get(s, 0) > order.get(best, 0):
+            best = s
+    return best
+
+
+def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
+    """Fetch recent events with local fallback."""
+    if _USE_REAL_MODULES and db is not None:
+        result = db.fetch_recent(limit)
+        return cast(list[dict[str, Any]], result)
+    return list(_SEED_EVENTS)[:limit]
+
+
+def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
+    """Run agent loop: evaluate → planner → worker → reviewer."""
+    if not _USE_REAL_MODULES or evaluate is None or planner is None or worker is None or reviewer is None:
+        return {
+            "trace": "  [Simulated] Region check: ✓\n  [Simulated] CMK check: ✓\n  [Simulated] PHI tag: ✗\n",
+            "verdict": "NEEDS_REVISION",
+            "checks_passed": ["Region check", "CMK check"],
+            "checks_failed": ["PHI DataClass tag missing"],
+            "result": None,
+            "plan": None,
+            "work": None,
+            "mttr_seconds": 4.2,
+        }
+
+    violations = evaluate(RESOURCES)
+    selected = next(
+        (
+            v
+            for v in violations
+            if str(v.get("resource_id", "")) == resource_id
+            and str(v.get("violation_type", "")) == violation_type
+        ),
+        None,
+    )
+    if not selected:
+        return {
+            "trace": "  No matching violation found.\n",
+            "verdict": "REJECTED",
+            "checks_passed": [],
+            "checks_failed": ["Violation not found"],
+            "result": None,
+            "plan": None,
+            "work": None,
+            "mttr_seconds": 0.0,
+        }
+
+    t0 = datetime.now()
+    plan = planner.run(selected)
+    work = worker.run(plan)
+    result = reviewer.run(plan, work, started_at=t0)
+
+    trace = ""
+    for check in result.checks_passed:
+        trace += f"  ✓ {check}\n"
+    for check in result.checks_failed:
+        trace += f"  ✗ {check}\n"
+    if not trace:
+        trace = "  (no checks reported)\n"
+
+    if result.verdict == "APPROVED" and embed_and_store is not None:
+        detail = selected.get("detail") or (
+            f"{selected.get('violation_type', '')} {selected.get('resource_id', '')} "
+            f"{selected.get('regulation_cited', '')}"
+        )
+        embed_and_store(
+            detail,
+            work.hcl_code,
+            {
+                "regulatory_context": str(selected.get("regulation_cited", "")),
+                "confidence_score": "0.95",
+            },
+        )
+
+    if db is not None:
+        event: dict[str, Any] = {
+            "task_id": plan.task_id,
+            "timestamp": datetime.now().isoformat(),
+            "violation_type": plan.violation_type,
+            "resource_id": plan.resource_id,
+            "planner_output": plan.fix_strategy,
+            "worker_output": work.hcl_code,
+            "reviewer_verdict": result.verdict,
+            "reviewer_notes": result.notes,
+            "is_compliant": result.is_compliant,
+            "mttr_seconds": result.mttr_seconds,
+            "tokens_used": plan.tokens_used + work.tokens_used + result.tokens_used,
+            "rag_hit": plan.rag_hit,
+        }
+        db.insert(event)
+
+    return {
+        "trace": trace,
+        "verdict": result.verdict,
+        "checks_passed": result.checks_passed,
+        "checks_failed": result.checks_failed,
+        "result": result,
+        "plan": plan,
+        "work": work,
+        "mttr_seconds": result.mttr_seconds,
+    }
+
+
+# ── Mobile CSS (StarGuard-style) ──────────────────────────────────────────────
+_MOBILE_CSS = """
+body { max-width: 480px; margin: 0 auto; background: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+.ss-header { background: #4A3E8F; color: white; height: 56px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.25rem; }
+.ss-card { background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); padding: 16px; margin-bottom: 12px; }
+.severity-high { background: #dc3545; color: white; padding: 8px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }
+.severity-medium { background: #fd7e14; color: white; padding: 8px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }
+.severity-low { background: #28a745; color: white; padding: 8px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }
+.severity-compliant { background: #28a745; color: white; padding: 8px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; display: inline-block; }
+button, .btn { min-height: 44px !important; }
+.ss-run-btn { width: 100%; height: 52px; background: #D4AF37; color: black; font-weight: bold; border-radius: 8px; border: none; }
+.violation-card { border-left: 4px solid #dc3545; }
+.compliant-card { border-left: 4px solid #28a745; }
+.nav-pill-button { background: #4A3E8F; color: white; }
+.kpi-tile { background: white; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 16px; text-align: center; }
+.ss-gold-btn { background: #D4AF37; color: black; font-weight: bold; min-height: 44px; }
+"""
+
+
+@dataclass
+class PortfolioApp:
+    """Portfolio app item for About tab."""
+
+    name: str
+    description: str
+    url: str
+    qr_file: str
+
+
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+_PORTFOLIO_APPS: list[PortfolioApp] = [
+    PortfolioApp("AuditShield Live", "RADV Audit Defense Platform", "https://huggingface.co/spaces/rreichert/auditshield-live", "QR_AuditShield_Live.b64.txt"),
+    PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_-Landing.b64.txt"),
+    PortfolioApp("StarGuard Mobile", "MA Intelligence on Mobile", "https://rreichert-starguardai.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
+    PortfolioApp("SovereignShield Mobile", "Sovereign Cloud Compliance", "https://rreichert-sovereignshield-mobile.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
+]
+
+
+def _load_qr_base64(filename: str) -> str:
+    """Load base64 PNG from assets/*.b64.txt."""
+    path = _ASSETS_DIR / filename
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+# ── UI ──────────────────────────────────────────────────────────────────────
+
+def _catalogue_ui() -> Any:
+    """Tab 1: Resource Catalogue — server-rendered cards with violation details."""
+    return ui.div(
+        ui.div("Resource Catalogue", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.output_ui("catalogue_content"),
+    )
+
+
+def _agent_loop_ui() -> Any:
+    """Tab 2: Run Remediation with condensed trace and verdict."""
+    return ui.div(
+        ui.div("Run Remediation", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.div(
+            ui.input_select("violation_select", "Violation", choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}),
+            ui.input_action_button("run_btn", "Run", class_="ss-run-btn"),
+            ui.output_ui("trace_condensed"),
+            ui.output_ui("verdict_line"),
+            ui.output_ui("mttr_line"),
+            class_="ss-card",
+            style="width: 100%;",
+        ),
+    )
+
+
+def _intelligence_ui() -> Any:
+    """Tab 3: Intelligence — 2×2 KPI tiles + violation donut."""
+    return ui.div(
+        ui.div("Intelligence", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.div(
+            ui.div(
+                ui.output_ui("kpi_mttr"),
+                ui.output_ui("kpi_rag"),
+                ui.output_ui("kpi_compliance"),
+                ui.output_ui("kpi_kb"),
+                class_="row",
+                style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;",
+            ),
+            ui.div(ui.output_ui("donut_chart"), class_="ss-card"),
+            ui.input_action_button("refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-top: 12px; color: white;"),
+        ),
+    )
+
+
+def _about_ui() -> Any:
+    """Tab 4: About + Services."""
+    return ui.div(
+        ui.div("Robert Reichert", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.div(
+            ui.div(
+                ui.div("RR", style="width: 72px; height: 72px; border-radius: 50%; background: #4A3E8F; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.5rem; margin: 0 auto 12px;"),
+                ui.div("Robert Reichert", style="font-weight: 700; font-size: 1.25rem; text-align: center;"),
+                ui.div("Principal, Sovereign Cloud & AI", style="text-align: center; color: #666; margin-bottom: 8px;"),
+                ui.div(
+                    ui.span("Cloud Compliance", class_="badge bg-secondary", style="margin: 4px;"),
+                    ui.span("Agentic AI", class_="badge bg-secondary", style="margin: 4px;"),
+                    ui.span("Healthcare Analytics", class_="badge bg-secondary", style="margin: 4px;"),
+                    style="display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-bottom: 12px;",
+                ),
+                ui.div(
+                    ui.a("reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com", style="margin: 0 8px;"),
+                    ui.a("LinkedIn", href="https://www.linkedin.com/in/robertreichert-healthcareai/", style="margin: 0 8px;"),
+                    ui.span("+1 (555) 123-4567", style="margin: 0 8px;"),
+                    style="text-align: center; font-size: 14px; margin-bottom: 12px;",
+                ),
+                ui.div("Available April 2026", class_="severity-compliant", style="display: inline-block; background: #D4AF37 !important; color: black !important; margin: 0 auto;"),
+                class_="ss-card",
+                style="text-align: center;",
+            ),
+            style="margin-bottom: 16px;",
+        ),
+        ui.h6("Portfolio Apps", style="margin-bottom: 12px;"),
+        ui.div(
+            *[
+                ui.div(
+                    ui.div(app.name, style="font-weight: 600; margin-bottom: 4px;"),
+                    ui.div(app.description, style="font-size: 13px; color: #666; margin-bottom: 4px;"),
+                    ui.a(app.url, href=app.url, target="_blank", style="font-size: 12px; margin-bottom: 8px; display: block;"),
+                    ui.img(src=f"data:image/png;base64,{_load_qr_base64(app.qr_file)}", style="height: 80px; width: 80px;", alt=app.name) if _load_qr_base64(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
+                    class_="ss-card",
+                    style="margin-bottom: 12px;",
+                )
+                for app in _PORTFOLIO_APPS
+            ],
+        ),
+        ui.h6("Services", style="margin-top: 24px; margin-bottom: 12px;"),
+        ui.accordion(
+            ui.accordion_panel(
+                "Sovereign Cloud Compliance Audit — $150/hr",
+                ui.p("HIPAA-compliant cloud resource audit with OPA policy evaluation and Terraform remediation."),
+                ui.tags.ul(ui.tags.li("Policy-as-code review"), ui.tags.li("Violation report"), ui.tags.li("Terraform fix generation")),
+                ui.p("Typical engagement: 2–4 weeks", style="margin-top: 8px;"),
+            ),
+            ui.accordion_panel(
+                "Agentic AI System Design — $125/hr",
+                ui.p("Design and implement agentic workflows (Planner → Worker → Reviewer) for compliance and automation."),
+                ui.tags.ul(ui.tags.li("Architecture design"), ui.tags.li("RAG integration"), ui.tags.li("Claude API integration")),
+                ui.p("Typical engagement: 4–8 weeks", style="margin-top: 8px;"),
+            ),
+            ui.accordion_panel(
+                "HEDIS/RADV Analytics Consulting — $100/hr",
+                ui.p("Healthcare quality measure analytics, RADV exposure scoring, and star rating optimization."),
+                ui.tags.ul(ui.tags.li("HEDIS measure analysis"), ui.tags.li("RADV scenario modeling"), ui.tags.li("ROI projections")),
+                ui.p("Typical engagement: 2–6 weeks", style="margin-top: 8px;"),
+            ),
+        ),
+        ui.div(
+            ui.a("Contact: reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com",
+            class_="btn ss-gold-btn", style="width: 100%; margin-top: 16px; display: block; text-align: center; text-decoration: none; line-height: 44px;"),
+        ),
+    )
+
+
+app_ui = ui.page_fluid(
+    ui.tags.head(
+        ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=5.0"),
+        ui.tags.title("SovereignShield Mobile"),
+        ui.tags.style(_MOBILE_CSS),
+    ),
+    ui.navset_pill(
+        ui.nav_panel("Catalogue", _catalogue_ui(), value="catalogue"),
+        ui.nav_panel("Agent Loop", _agent_loop_ui(), value="agent"),
+        ui.nav_panel("Intelligence", _intelligence_ui(), value="intel"),
+        ui.nav_panel("About", _about_ui(), value="about"),
+    ),
+)
+
+
+def server(input: Any, output: Any, session: Any) -> None:
+    violations: list[dict[str, Any]] = (
+        list(evaluate(RESOURCES)) if _USE_REAL_MODULES and evaluate else []
+    )
+    if not violations:
+        violations = [
+            {"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"},
+        ]
+    choices = {
+        f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
+        for v in violations
+    }
+    if not choices:
+        choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+
+    @reactive.effect
+    def _update_choices() -> None:
+        ui.update_select("violation_select", choices=choices)
+
+    agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
+
+    @reactive.effect
+    @reactive.event(input.run_btn)
+    def _on_run() -> None:
+        sel = input.violation_select()
+        if not sel:
+            return
+        parts = str(sel).split("|", 1)
+        rid = parts[0] if len(parts) > 0 else ""
+        vtype = parts[1] if len(parts) > 1 else ""
+        agent_result.set(_run_agents(rid, vtype))
+
+    # Catalogue: server-rendered cards with inline violation details
+    @render.ui
+    def catalogue_content() -> Any:
+        out: list[Any] = []
+        v_all: list[dict[str, Any]] = (
+            list(evaluate(RESOURCES)) if _USE_REAL_MODULES and evaluate else []
+        )
+        if not v_all:
+            v_all = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH", "detail": "Region not in allowed sovereign regions"}]
+        for r in RESOURCES:
+            res_v = [v for v in v_all if str(v.get("resource_id", "")) == r.resource_id]
+            sev = _highest_severity(res_v) if res_v else ""
+            is_compliant = len(res_v) == 0
+            badge_cls = "severity-compliant" if is_compliant else f"severity-{sev.lower()}"
+            badge_text = "✓ Compliant" if is_compliant else sev
+            card_children: list[Any] = [
+                ui.div(ui.span(r.resource_id, style="font-weight: bold;"), ui.span(r.resource_type, class_="badge bg-secondary", style="margin-left: 8px; font-size: 11px;"), style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;"),
+                ui.div("Region: " + r.region, style="font-size: 14px; color: #666; margin-bottom: 8px;"),
+                ui.span(badge_text, class_=badge_cls),
+            ]
+            if res_v:
+                card_children.append(
+                    ui.div(
+                        ui.h6("Violations", style="margin-top: 12px;"),
+                        *[ui.div(ui.strong(f"{v.get('violation_type', '')} ({v.get('severity', '')})"), ui.p(str(v.get("detail", "")), style="margin: 4px 0 0 0; font-size: 13px;"), style="padding: 8px; border-bottom: 1px solid #eee;") for v in res_v],
+                        style="margin-top: 12px;",
+                    )
+                )
+            card_cls = "compliant-card ss-card" if is_compliant else "violation-card ss-card"
+            out.append(ui.div(*card_children, class_=card_cls))
+        return ui.div(*out)
+
+    # Agent Loop outputs
+    @render.ui
+    def trace_condensed() -> Any:
+        r = agent_result()
+        if r is None:
+            return ui.div("Click Run to execute the agent loop.", style="font-size: 14px; color: #666;")
+        passed = r.get("checks_passed") or []
+        failed = r.get("checks_failed") or []
+        lines: list[str] = [f"✓ {c}" for c in passed[:2]] + [f"✗ {c}" for c in failed[:1]]
+        if len(lines) < 3 and passed:
+            lines = [f"✓ {c}" for c in passed[:3]]
+        elif len(lines) < 3 and failed:
+            lines = lines + [f"✗ {c}" for c in failed[: 3 - len(lines)]]
+        text = "\n".join(lines[:3]) if lines else ((r.get("trace") or "").split("\n")[0] or "—")
+        return ui.div(
+            ui.pre(text, style="font-family: monospace; font-size: 13px; white-space: pre-wrap;"),
+            style="margin-top: 12px;",
+        )
+
+    @render.ui
+    def verdict_line() -> Any:
+        r = agent_result()
+        if r is None:
+            return ui.div()
+        v = r.get("verdict", "")
+        color: str = {"APPROVED": "#28a745", "REJECTED": "#dc3545", "NEEDS_REVISION": "#fd7e14"}.get(v, "#333")
+        return ui.div(v, style=f"font-size: 1.25rem; font-weight: bold; color: {color}; margin-top: 12px;")
+
+    @render.ui
+    def mttr_line() -> Any:
+        r = agent_result()
+        if r is None:
+            return ui.div()
+        mttr = r.get("mttr_seconds", 0)
+        return ui.div(f"MTTR: {mttr:.1f}s", style="font-size: 12px; color: #666; margin-top: 4px;")
+
+    # Intelligence
+    refresh_trigger: reactive.Value[int] = reactive.Value(0)
+
+    @reactive.effect
+    @reactive.event(input.refresh_btn)
+    def _refresh() -> None:
+        refresh_trigger.set(refresh_trigger() + 1)
+
+    @reactive.calc
+    def _kpi_data() -> tuple[float, float, float, int]:
+        refresh_trigger()
+        runs = _effective_log(100)
+        if _USE_REAL_MODULES and db is not None:
+            avg_mttr = db.avg_mttr()
+            rag_rate = db.rag_hit_rate()
+            kb = db.kb_count()
+        else:
+            avg_mttr = 4.2 if runs else 0.0
+            rag_rate = 0.0
+            kb = 0
+        compliant = sum(1 for e in runs if e.get("is_compliant"))
+        total = len(runs)
+        compliance_rate = (compliant / total * 100) if total else 0.0
+        return (avg_mttr, rag_rate * 100, compliance_rate, kb)
+
+    @render.ui
+    def kpi_mttr() -> Any:
+        v = _kpi_data()[0]
+        return ui.div(ui.div(f"{v:.1f}s", style="font-size: 1.25rem; font-weight: bold;"), ui.div("Avg MTTR", style="font-size: 12px; color: #666;"), class_="kpi-tile")
+
+    @render.ui
+    def kpi_rag() -> Any:
+        v = _kpi_data()[1]
+        return ui.div(ui.div(f"{v:.1f}%", style="font-size: 1.25rem; font-weight: bold;"), ui.div("RAG Hit Rate", style="font-size: 12px; color: #666;"), class_="kpi-tile")
+
+    @render.ui
+    def kpi_compliance() -> Any:
+        v = _kpi_data()[2]
+        return ui.div(ui.div(f"{v:.1f}%", style="font-size: 1.25rem; font-weight: bold;"), ui.div("Compliance Rate", style="font-size: 12px; color: #666;"), class_="kpi-tile")
+
+    @render.ui
+    def kpi_kb() -> Any:
+        v = _kpi_data()[3]
+        return ui.div(ui.div(str(v), style="font-size: 1.25rem; font-weight: bold;"), ui.div("KB Entries", style="font-size: 12px; color: #666;"), class_="kpi-tile")
+
+    @render.ui
+    def donut_chart() -> Any:
+        refresh_trigger()
+        runs = _effective_log(100)
+        try:
+            from project.sovereignshield_mobile.core.charts import violation_donut
+            import matplotlib
+            matplotlib.use("Agg")
+            p = violation_donut(runs)
+            buf = io.BytesIO()
+            p.save(buf, format="png", dpi=100, bbox_inches="tight")
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode("utf-8")
+            return ui.img(src=f"data:image/png;base64,{b64}", style="max-width: 100%; height: auto;")
+        except Exception:
+            return ui.div("Chart unavailable", style="color: #999; padding: 24px; text-align: center;")
+
+
+app = App(app_ui, server, debug=True)
