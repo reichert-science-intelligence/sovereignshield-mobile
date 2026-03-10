@@ -5,13 +5,21 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir --upgrade pip
 
+# Install torch CPU-only first to prevent heavy GPU download
+RUN pip install --no-cache-dir \
+    torch --index-url https://download.pytorch.org/whl/cpu
+
 COPY Artifacts/ .
-RUN pip install --no-cache-dir -r project/sovereignshield_mobile/requirements.txt \
+
+RUN pip install --no-cache-dir \
+    -r project/sovereignshield_mobile/requirements.txt
+
+RUN pip install --no-cache-dir \
     chromadb sentence-transformers pandas plotnine
 
 RUN mkdir -p /tmp/chroma_db
