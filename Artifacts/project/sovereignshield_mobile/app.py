@@ -9,7 +9,6 @@ import io
 import os
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -254,7 +253,6 @@ class PortfolioApp:
     qr_file: str
 
 
-_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 _PORTFOLIO_APPS: list[PortfolioApp] = [
     PortfolioApp("AuditShield Live", "RADV Audit Defense Platform", "https://huggingface.co/spaces/rreichert/auditshield-live", "QR_AuditShield_Live.b64.txt"),
     PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_-Landing.b64.txt"),
@@ -263,21 +261,43 @@ _PORTFOLIO_APPS: list[PortfolioApp] = [
 ]
 
 
-def _load_qr_base64(filename: str) -> str:
-    """Load base64 PNG from assets/*.b64.txt."""
-    path = _ASSETS_DIR / filename
-    if path.is_file():
-        return path.read_text(encoding="utf-8").strip()
-    return ""
+def _load_qr(filename: str) -> str:
+    """Load base64 PNG from assets/*.b64.txt. Handles whitespace, newlines, data URI prefix."""
+    try:
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        path = os.path.join(assets_dir, filename)
+        with open(path, "r") as f:
+            data = f.read().strip().replace("\n", "").replace("\r", "")
+        if not data.startswith("data:"):
+            data = f"data:image/png;base64,{data}"
+        return data
+    except Exception:
+        return ""
 
 
 # ── UI ──────────────────────────────────────────────────────────────────────
+
+def _footer() -> Any:
+    """Synthetic data disclaimer footer for all tabs."""
+    return ui.div(
+        ui.hr(style="margin: 24px 0 8px 0; border-color: #dee2e6;"),
+        ui.p(
+            "© 2026 Robert Reichert | Sovereign Cloud & AI. "
+            "All data shown is synthetic and generated for demonstration purposes only. "
+            "No real patient, member, or infrastructure data is used.",
+            style="font-size: 11px; color: #6c757d; text-align: center; "
+                  "padding: 0 16px 16px 16px; line-height: 1.5;",
+        ),
+        style="width: 100%;",
+    )
+
 
 def _catalogue_ui() -> Any:
     """Tab 1: Resource Catalogue — server-rendered cards with violation details."""
     return ui.div(
         ui.div("Resource Catalogue", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
         ui.output_ui("catalogue_content"),
+        _footer(),
     )
 
 
@@ -294,6 +314,7 @@ def _agent_loop_ui() -> Any:
             class_="ss-card",
             style="width: 100%;",
         ),
+        _footer(),
     )
 
 
@@ -313,6 +334,7 @@ def _intelligence_ui() -> Any:
             ui.div(ui.output_ui("donut_chart"), class_="ss-card"),
             ui.input_action_button("refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-top: 12px; color: white;"),
         ),
+        _footer(),
     )
 
 
@@ -350,7 +372,7 @@ def _about_ui() -> Any:
                     ui.div(app.name, style="font-weight: 600; margin-bottom: 4px;"),
                     ui.div(app.description, style="font-size: 13px; color: #666; margin-bottom: 4px;"),
                     ui.a(app.url, href=app.url, target="_blank", style="font-size: 12px; margin-bottom: 8px; display: block;"),
-                    ui.img(src=f"data:image/png;base64,{_load_qr_base64(app.qr_file)}", style="height: 80px; width: 80px;", alt=app.name) if _load_qr_base64(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
+                    ui.img(src=_load_qr(app.qr_file), style="height: 80px; width: 80px;", alt=app.name) if _load_qr(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
                     class_="ss-card",
                     style="margin-bottom: 12px;",
                 )
@@ -382,6 +404,7 @@ def _about_ui() -> Any:
             ui.a("Contact: reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com",
             class_="btn ss-gold-btn", style="width: 100%; margin-top: 16px; display: block; text-align: center; text-decoration: none; line-height: 44px;"),
         ),
+        _footer(),
     )
 
 
