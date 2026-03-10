@@ -386,7 +386,7 @@ def _about_ui() -> Any:
                     ui.span("+1 (555) 123-4567", style="margin: 0 8px;"),
                     style="text-align: center; font-size: 14px; margin-bottom: 12px;",
                 ),
-                ui.div("Available April 2026", class_="severity-compliant", style="display: inline-block; background: #D4AF37 !important; color: black !important; margin: 0 auto;"),
+                ui.div("Available March 2026", class_="severity-compliant", style="display: inline-block; background: #D4AF37 !important; color: black !important; margin: 0 auto;"),
                 class_="ss-card",
                 style="text-align: center;",
             ),
