@@ -1,8 +1,4 @@
-# SovereignShield Mobile — Shiny for Python on HuggingFace Spaces
-# Port 7860 required by Spaces
 FROM python:3.11-slim
-
-WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -10,9 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir --upgrade pip
 
-# Install torch CPU-only first to prevent heavy GPU download
 RUN pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu
+
+WORKDIR /app/Artifacts
 
 COPY Artifacts/ .
 
@@ -23,8 +20,6 @@ RUN pip install --no-cache-dir \
     chromadb sentence-transformers pandas plotnine
 
 RUN mkdir -p /tmp/chroma_db
-
-WORKDIR /app/Artifacts
 
 EXPOSE 7860
 
