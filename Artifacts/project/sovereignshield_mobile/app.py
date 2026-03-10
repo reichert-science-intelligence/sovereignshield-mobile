@@ -261,6 +261,21 @@ _PORTFOLIO_APPS: list[PortfolioApp] = [
 ]
 
 
+def _load_avatar() -> str:
+    """Load avatar.png from assets as base64 data URI."""
+    try:
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        path = os.path.join(assets_dir, "avatar.png")
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        return f"data:image/png;base64,{data}"
+    except Exception:
+        return ""
+
+
+_AVATAR_SRC: str = _load_avatar()
+
+
 def _load_qr(filename: str) -> str:
     """Load base64 PNG from assets/*.b64.txt. Handles whitespace, newlines, data URI prefix."""
     try:
@@ -344,7 +359,19 @@ def _about_ui() -> Any:
         ui.div("Robert Reichert", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
         ui.div(
             ui.div(
-                ui.div("RR", style="width: 72px; height: 72px; border-radius: 50%; background: #4A3E8F; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.5rem; margin: 0 auto 12px;"),
+                (
+                    ui.div(
+                        ui.img(
+                            src=_AVATAR_SRC,
+                            style="width: 96px; height: 96px; border-radius: 50%; "
+                                  "object-fit: cover; object-position: center top; "
+                                  "border: 3px solid #4A3E8F; display: block; margin: 0 auto 12px auto;",
+                        ),
+                        style="text-align: center;",
+                    )
+                    if _AVATAR_SRC
+                    else ui.div("RR", style="width: 72px; height: 72px; border-radius: 50%; background: #4A3E8F; color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.5rem; margin: 0 auto 12px;")
+                ),
                 ui.div("Robert Reichert", style="font-weight: 700; font-size: 1.25rem; text-align: center;"),
                 ui.div("Principal, Sovereign Cloud & AI", style="text-align: center; color: #666; margin-bottom: 8px;"),
                 ui.div(
