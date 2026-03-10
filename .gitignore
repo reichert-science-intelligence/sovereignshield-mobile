@@ -11,3 +11,6 @@ venv/
 
 # ChromaDB
 /tmp/chroma_db/
+
+# Local avatar (use avatar.b64.txt in repo for HF compatibility)
+**/assets/avatar.png
