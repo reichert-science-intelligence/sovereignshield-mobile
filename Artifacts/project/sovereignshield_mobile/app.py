@@ -396,6 +396,23 @@ def _agent_loop_ui() -> Any:
     return ui.div(
         ui.div("Run Remediation", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
         ui.div(
+            ui.accordion(
+                ui.accordion_panel(
+                    "⚙️ Policy Controls",
+                    ui.input_checkbox("policy_encryption", "Enforce encryption_enabled", value=True),
+                    ui.input_checkbox("policy_public", "Enforce is_public == False", value=True),
+                    ui.input_checkbox("policy_region", "Enforce approved regions only", value=True),
+                    ui.input_action_button(
+                        "apply_policy",
+                        "⚡ Apply Policy",
+                        style="background:#4A3E8F; color:white; "
+                              "border:none; padding:8px 16px; "
+                              "border-radius:6px; margin-top:8px; width:100%;",
+                    ),
+                    ui.output_text("policy_status"),
+                ),
+                open=False,
+            ),
             ui.input_select("violation_select", "Violation", choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}),
             ui.input_action_button("run_btn", "Run", class_="ss-run-btn"),
             ui.output_ui("trace_condensed"),
@@ -526,6 +543,27 @@ app_ui = ui.page_fluid(
 
 
 def server(input: Any, output: Any, session: Any) -> None:
+    active_policy_flags: reactive.Value[dict[str, bool]] = reactive.Value({
+        "encryption": True,
+        "public": True,
+        "region": True,
+    })
+
+    @reactive.effect
+    @reactive.event(input.apply_policy)
+    def _apply_policy() -> None:
+        active_policy_flags.set({
+            "encryption": input.policy_encryption(),
+            "public": input.policy_public(),
+            "region": input.policy_region(),
+        })
+
+    @render.text
+    def policy_status() -> str:
+        if input.apply_policy() > 0:
+            return "✅ Policy updated"
+        return ""
+
     def _dict_to_cloud_resource(d: dict[str, Any]) -> CloudResource:
         """Convert parsed Terraform dict to CloudResource."""
         return CloudResource(
@@ -564,7 +602,18 @@ def server(input: Any, output: Any, session: Any) -> None:
         v = list(evaluate(active_resources())) if _USE_REAL_MODULES and evaluate else []
         if not v:
             v = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"}]
-        return v
+        flags = active_policy_flags()
+        filtered: list[dict[str, Any]] = []
+        for item in v:
+            vtype = str(item.get("violation_type", ""))
+            if vtype in ("hipaa_encryption", "cmk_required") and not flags.get("encryption", True):
+                continue
+            if vtype == "public_exposure" and not flags.get("public", True):
+                continue
+            if vtype == "data_residency" and not flags.get("region", True):
+                continue
+            filtered.append(item)
+        return filtered
 
     @reactive.calc
     def _violation_choices() -> dict[str, str]:
