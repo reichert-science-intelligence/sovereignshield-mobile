@@ -255,9 +255,9 @@ class PortfolioApp:
 
 _PORTFOLIO_APPS: list[PortfolioApp] = [
     PortfolioApp("AuditShield Live", "RADV Audit Defense Platform", "https://huggingface.co/spaces/rreichert/auditshield-live", "QR_AuditShield_Live.b64.txt"),
-    PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_-Landing.b64.txt"),
+    PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_SovereignShield_Desktop.b64.txt"),
     PortfolioApp("StarGuard Mobile", "MA Intelligence on Mobile", "https://rreichert-starguardai.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
-    PortfolioApp("SovereignShield Mobile", "Sovereign Cloud Compliance", "https://rreichert-sovereignshield-mobile.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
+    PortfolioApp("SovereignShield Mobile", "Sovereign Cloud Compliance", "https://rreichert-sovereignshield-mobile.hf.space", "QR_SovereignShield_Mobile.b64.txt"),
 ]
 
 
@@ -385,7 +385,7 @@ def _about_ui() -> Any:
                 ui.div(
                     ui.a("reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com", style="margin: 0 8px;"),
                     ui.a("LinkedIn", href="https://www.linkedin.com/in/robertreichert-healthcareai/", style="margin: 0 8px;"),
-                    ui.span("+1 (555) 123-4567", style="margin: 0 8px;"),
+                    ui.span("+1 (480) 767-1337", style="margin: 0 8px;"),
                     style="text-align: center; font-size: 14px; margin-bottom: 12px;",
                 ),
                 ui.div("Available March 2026", class_="severity-compliant", style="display: inline-block; background: #D4AF37 !important; color: black !important; margin: 0 auto;"),
