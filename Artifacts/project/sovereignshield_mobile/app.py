@@ -22,17 +22,16 @@ try:
     from project.sovereignshield_mobile.agents.worker import worker
     from project.sovereignshield_mobile.agents.reviewer import reviewer
     from project.sovereignshield_mobile.rag.retriever import embed_and_store, retrieve_similar
-    from project.sovereignshield_mobile.core.tf_parser import CloudResource  # type: ignore[assignment]
 except ImportError:
     _USE_REAL_MODULES = False
-    evaluate = None  # type: ignore[assignment]
-    db = None  # type: ignore[assignment]
-    planner = None  # type: ignore[assignment]
-    worker = None  # type: ignore[assignment]
-    reviewer = None  # type: ignore[assignment]
-    embed_and_store = None  # type: ignore[assignment]
-    retrieve_similar = None  # type: ignore[assignment]
-    Violation = dict  # type: ignore[misc, assignment]
+    evaluate = None
+    db = None
+    planner = None
+    worker = None
+    reviewer = None
+    embed_and_store = None
+    retrieve_similar = None
+    Violation = dict
 
 # CloudResource from models (tf_parser imports LegacyCloudResource, not CloudResource)
 from project.sovereignshield_mobile.models import CloudResource
