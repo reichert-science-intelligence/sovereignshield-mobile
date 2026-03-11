@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any, Optional, cast
+from typing import Any, cast
 from uuid import uuid4
 
 _COLLECTION_NAME: str = "sovereign_compliance_kb"
@@ -16,10 +16,10 @@ _PERSIST_DIR: str = (
     if os.name != "nt"
     else os.path.join(tempfile.gettempdir(), "chroma_db")
 )
-_collection: Optional[Any] = None
+_collection: Any | None = None
 
-chromadb: Optional[Any] = None
-embedding_functions: Optional[Any] = None
+chromadb: Any | None = None
+embedding_functions: Any | None = None
 try:
     import chromadb as _chromadb
     from chromadb.utils import embedding_functions as _ef_mod

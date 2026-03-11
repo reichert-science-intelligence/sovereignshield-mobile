@@ -32,8 +32,8 @@ try:
 except ImportError:
     pass
 
-_SUPABASE_AVAILABLE = False
-_client: Any = None
+_SUPABASE_AVAILABLE: bool = False
+_client: Any | None = None
 
 try:
     from supabase import create_client

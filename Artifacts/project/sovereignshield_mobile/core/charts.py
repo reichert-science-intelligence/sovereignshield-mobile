@@ -178,7 +178,7 @@ def mttr_trend(runs: list[dict[str, Any]], limit: int = 20) -> Any:
     return p
 
 
-def violation_donut(runs: list[dict[str, Any]]) -> Any:
+def violation_donut(runs: list[dict[str, Any]]) -> object:
     """
     Plot violation breakdown donut: HIGH/MEDIUM/LOW counts.
     Returns plotnine ggplot object.

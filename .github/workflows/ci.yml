@@ -1,0 +1,38 @@
+# SovereignShield Mobile CI — lint, typecheck, test, security
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy pytest pytest-cov pip-audit
+          pip install -e ".[dev]" 2>/dev/null || pip install -r Artifacts/project/sovereignshield_mobile/requirements.txt
+          pip install chromadb sentence-transformers pandas plotnine 2>/dev/null || true
+
+      - name: Ruff lint
+        run: ruff check Artifacts/project/sovereignshield_mobile/
+
+      - name: Mypy typecheck
+        run: PYTHONPATH=Artifacts mypy Artifacts/project/sovereignshield_mobile/ --strict --ignore-missing-imports
+
+      - name: Pytest
+        run: PYTHONPATH=Artifacts pytest Artifacts/project/sovereignshield_mobile/tests/ -v --tb=short --cov=project.sovereignshield_mobile --cov-report=term-missing
+
+      - name: Security audit
+        run: pip-audit
