@@ -598,12 +598,11 @@ def server(input: Any, output: Any, session: Any) -> None:
     @render.ui
     def catalogue_content() -> Any:
         out: list[Any] = []
-        v_all: list[dict[str, Any]] = (
-            list(evaluate(RESOURCES)) if _USE_REAL_MODULES and evaluate else []
-        )
+        resources = active_resources()
+        v_all = _violations()
         if not v_all:
             v_all = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH", "detail": "Region not in allowed sovereign regions"}]
-        for r in RESOURCES:
+        for r in resources:
             res_v = [v for v in v_all if str(v.get("resource_id", "")) == r.resource_id]
             sev = _highest_severity(res_v) if res_v else ""
             is_compliant = len(res_v) == 0
