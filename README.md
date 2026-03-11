@@ -8,6 +8,7 @@ pinned: false
 ---
 
 # SovereignShield Mobile
+![CI](https://github.com/reichert-science-intelligence/sovereignshield-mobile/actions/workflows/ci.yml/badge.svg)
 ### Compliance Remediation — OPA + Claude Agents (Mobile)
 
 Mobile-first companion to SovereignShield Desktop.
