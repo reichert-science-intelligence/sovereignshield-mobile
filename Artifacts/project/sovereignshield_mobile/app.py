@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import os
+import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -44,6 +47,70 @@ except ImportError:
 from datetime import datetime
 
 # Full 5-resource catalogue (same as desktop)
+
+
+def parse_terraform(file_path: str) -> list[dict[str, Any]]:
+    """
+    Parse Terraform .tf or .tfstate file and extract resources.
+    Returns list of dicts with keys: resource_id, resource_type, region, encryption_enabled, is_public, tags.
+    Falls back to empty list if parsing fails (caller uses RESOURCES when empty).
+    """
+    result: list[dict[str, Any]] = []
+    path = Path(file_path)
+    if not path.exists():
+        return []
+    try:
+        suffix = path.suffix.lower()
+        if suffix in (".tfstate", ".json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            resources = data.get("resources") or []
+            for r in resources:
+                res_type = str(r.get("type", ""))
+                res_name = str(r.get("name", ""))
+                resource_id = f"{res_type}-{res_name}".replace("aws_", "").replace("_", "-") if res_type and res_name else res_name or res_type
+                instances = r.get("instances") or []
+                region = ""
+                tags: dict[str, str] = {}
+                if instances:
+                    attrs = instances[0].get("attributes") or {}
+                    region = str(attrs.get("region") or attrs.get("region_name") or "")
+                    if not region and attrs.get("availability_zone"):
+                        az = str(attrs["availability_zone"])
+                        match = re.match(r"^([a-z]+-[a-z]+-\d+)", az)
+                        region = match.group(1) if match else "us-east-1"
+                    raw_tags = attrs.get("tags") or {}
+                    if isinstance(raw_tags, dict):
+                        tags = {str(k): str(v) for k, v in raw_tags.items()}
+                if not region:
+                    region = "us-east-1"
+                result.append({
+                    "resource_id": resource_id or f"resource-{len(result)}",
+                    "resource_type": res_type,
+                    "region": region,
+                    "encryption_enabled": False,
+                    "is_public": False,
+                    "tags": tags,
+                })
+        elif suffix == ".tf":
+            content = path.read_text(encoding="utf-8")
+            pattern = re.compile(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{', re.MULTILINE)
+            for m in pattern.finditer(content):
+                res_type = m.group(1).strip()
+                res_name = m.group(2).strip()
+                resource_id = f"{res_type}-{res_name}".replace("aws_", "").replace("_", "-") if res_type and res_name else res_name or res_type
+                result.append({
+                    "resource_id": resource_id or f"resource-{len(result)}",
+                    "resource_type": res_type,
+                    "region": "us-east-1",
+                    "encryption_enabled": False,
+                    "is_public": False,
+                    "tags": {},
+                })
+    except Exception:
+        return []
+    return result
+
+
 RESOURCES: list[CloudResource] = [
     CloudResource(
         resource_id="s3-phi-claims-001",
@@ -131,7 +198,7 @@ def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     return list(_SEED_EVENTS)[:limit]
 
 
-def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
+def _run_agents(resource_id: str, violation_type: str, resources: list[CloudResource]) -> dict[str, Any]:
     """Run agent loop: evaluate → planner → worker → reviewer."""
     if not _USE_REAL_MODULES or evaluate is None or planner is None or worker is None or reviewer is None:
         return {
@@ -145,7 +212,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
             "mttr_seconds": 4.2,
         }
 
-    violations = evaluate(RESOURCES)
+    violations = evaluate(resources)
     selected = next(
         (
             v
@@ -312,6 +379,13 @@ def _catalogue_ui() -> Any:
     """Tab 1: Resource Catalogue — server-rendered cards with violation details."""
     return ui.div(
         ui.div("Resource Catalogue", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.input_file(
+            "tf_upload",
+            "Upload Terraform File",
+            accept=[".tf", ".tfstate", ".json"],
+            placeholder="Drop .tf or .tfstate file here",
+        ),
+        ui.output_text("upload_status"),
         ui.output_ui("catalogue_content"),
         _footer(),
     )
@@ -422,7 +496,7 @@ def _about_ui() -> Any:
                 ui.p("Typical engagement: 4–8 weeks", style="margin-top: 8px;"),
             ),
             ui.accordion_panel(
-                "HEDIS/RADV Analytics Consulting — $100/hr",
+                "HEDIS/RADV Analytics Consulting — Consulting Rate",
                 ui.p("Healthcare quality measure analytics, RADV exposure scoring, and star rating optimization."),
                 ui.tags.ul(ui.tags.li("HEDIS measure analysis"), ui.tags.li("RADV scenario modeling"), ui.tags.li("ROI projections")),
                 ui.p("Typical engagement: 2–6 weeks", style="margin-top: 8px;"),
@@ -452,23 +526,60 @@ app_ui = ui.page_fluid(
 
 
 def server(input: Any, output: Any, session: Any) -> None:
-    violations: list[dict[str, Any]] = (
-        list(evaluate(RESOURCES)) if _USE_REAL_MODULES and evaluate else []
-    )
-    if not violations:
-        violations = [
-            {"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"},
-        ]
-    choices = {
-        f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
-        for v in violations
-    }
-    if not choices:
-        choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+    def _dict_to_cloud_resource(d: dict[str, Any]) -> CloudResource:
+        """Convert parsed Terraform dict to CloudResource."""
+        return CloudResource(
+            resource_id=str(d.get("resource_id", "")),
+            resource_type=str(d.get("resource_type", "unknown")),
+            region=str(d.get("region", "us-east-1")),
+            encryption_enabled=bool(d.get("encryption_enabled", False)),
+            cmk_key_id=None,
+            is_public=bool(d.get("is_public", False)),
+            tags=dict(d.get("tags") or {}),
+        )
+
+    @reactive.calc
+    def active_resources() -> list[CloudResource]:
+        f = input.tf_upload()
+        if f is None or len(f) == 0:
+            return RESOURCES
+        try:
+            parsed = parse_terraform(f[0]["datapath"])
+            if not parsed:
+                return RESOURCES
+            return [_dict_to_cloud_resource(d) for d in parsed]
+        except Exception:
+            return RESOURCES
+
+    @render.text
+    def upload_status() -> str:
+        f = input.tf_upload()
+        if f is None or len(f) == 0:
+            return "Demo data active"
+        r = active_resources()
+        return f"{len(r)} resources loaded"
+
+    @reactive.calc
+    def _violations() -> list[dict[str, Any]]:
+        v = list(evaluate(active_resources())) if _USE_REAL_MODULES and evaluate else []
+        if not v:
+            v = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"}]
+        return v
+
+    @reactive.calc
+    def _violation_choices() -> dict[str, str]:
+        violations = _violations()
+        choices = {
+            f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
+            for v in violations
+        }
+        if not choices:
+            choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+        return choices
 
     @reactive.effect
     def _update_choices() -> None:
-        ui.update_select("violation_select", choices=choices)
+        ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
 
