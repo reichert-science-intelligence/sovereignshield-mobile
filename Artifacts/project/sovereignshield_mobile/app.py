@@ -4,11 +4,13 @@ Mirrors StarGuard Mobile layout/CSS. Port 7860. Launch: shiny run app.py --host 
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
 import os
 import re
+import time
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -415,6 +417,14 @@ def _agent_loop_ui() -> Any:
             ),
             ui.input_select("violation_select", "Violation", choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}),
             ui.input_action_button("run_btn", "Run", class_="ss-run-btn"),
+            ui.input_action_button(
+                "run_all",
+                "⚡ Run All Resources",
+                style="background:#D4AF37; color:#1A1633; font-weight:700; "
+                      "border:none; padding:10px; border-radius:8px; "
+                      "width:100%; margin-top:8px;",
+            ),
+            ui.output_ui("batch_results_panel"),
             ui.output_ui("trace_condensed"),
             ui.output_ui("verdict_line"),
             ui.output_ui("mttr_line"),
@@ -631,6 +641,42 @@ def server(input: Any, output: Any, session: Any) -> None:
         ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
+    batch_results: reactive.Value[list[dict]] = reactive.Value([])
+
+    @reactive.effect
+    @reactive.event(input.run_all)
+    async def _run_batch() -> None:
+        resources = active_resources()
+        results: list[dict] = []
+        violations_all = _violations()
+        for resource in resources:
+            res_violations = [
+                v for v in violations_all
+                if str(v.get("resource_id", "")) == resource.resource_id
+            ]
+            if not res_violations:
+                results.append({
+                    "resource_id": resource.resource_id,
+                    "verdict": "COMPLIANT",
+                    "violations": 0,
+                })
+                continue
+            try:
+                out = await asyncio.to_thread(
+                    _run_agents,
+                    resource.resource_id,
+                    res_violations[0]["violation_type"],
+                    resources,
+                )
+                verdict = out.get("verdict", "ERROR")
+            except Exception:
+                verdict = "ERROR"
+            results.append({
+                "resource_id": resource.resource_id,
+                "verdict": verdict,
+                "violations": len(res_violations),
+            })
+        batch_results.set(results)
 
     @reactive.effect
     @reactive.event(input.run_btn)
@@ -709,6 +755,36 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ui.div()
         mttr = r.get("mttr_seconds", 0)
         return ui.div(f"MTTR: {mttr:.1f}s", style="font-size: 12px; color: #666; margin-top: 4px;")
+
+    @render.ui
+    def batch_results_panel() -> Any:
+        results = batch_results()
+        if not results:
+            return ui.div()
+        compliant = sum(1 for r in results if r["verdict"] == "COMPLIANT")
+        total = len(results)
+        cards = "".join(
+            f"<div style='display:flex; justify-content:space-between; "
+            f"padding:8px; margin-bottom:6px; background:#1A1633; "
+            f"border-radius:8px; border-left:3px solid "
+            f"{'#10B981' if r['verdict']=='COMPLIANT' else '#EF4444'};'>"
+            f"<span style='color:#eee; font-size:0.8rem'>{r['resource_id']}</span>"
+            f"<span style='color:{'#10B981' if r['verdict']=='COMPLIANT' else '#EF4444'}; "
+            f"font-size:0.8rem; font-weight:700'>{r['verdict']}</span>"
+            f"</div>"
+            for r in results
+        )
+        return ui.HTML(
+            f"""
+            <div style='margin-top:12px;'>
+                <div style='color:#D4AF37; font-weight:700; '
+                            'margin-bottom:8px; font-size:0.9rem;'>
+                    {compliant}/{total} Compliant
+                </div>
+                {cards}
+            </div>
+            """
+        )
 
     # Intelligence
     refresh_trigger: reactive.Value[int] = reactive.Value(0)
