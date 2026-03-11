@@ -178,23 +178,21 @@ def mttr_trend(runs: list[dict[str, Any]], limit: int = 20) -> Any:
     return p
 
 
-def violation_donut(runs: list[dict[str, Any]]) -> object:
+def violation_donut(runs: list[dict[str, Any]]) -> Any:
     """
-    Plot violation breakdown donut: HIGH/MEDIUM/LOW counts.
+    Plot violation breakdown: HIGH/MEDIUM/LOW counts as bar chart.
     Returns plotnine ggplot object.
     """
     data = donut_data(runs)
     if data.empty:
         data = pd.DataFrame({"severity": ["INFO"], "count": [0]})
 
-    from plotnine import aes, geom_bar, ggplot, scale_fill_manual, theme_void
-    from plotnine.coords import coord_polar  # type: ignore[attr-defined]
+    from plotnine import aes, geom_col, ggplot, scale_fill_manual, theme_void
 
     severity_colors = {"HIGH": "#dc3545", "MEDIUM": "#ffc107", "LOW": "#28a745", "INFO": "#6c757d"}
     p = (
-        ggplot(data, aes(x="1", y="count", fill="severity"))  # type: ignore[no-untyped-call]
-        + geom_bar(stat="identity", width=0.6)
-        + coord_polar(theta="y")
+        ggplot(data, aes(x="severity", y="count", fill="severity"))  # type: ignore[no-untyped-call]
+        + geom_col()
         + scale_fill_manual(values=severity_colors, na_value="#e0e0e0")
         + theme_void()  # type: ignore[no-untyped-call]
     )
