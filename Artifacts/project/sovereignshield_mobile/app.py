@@ -558,6 +558,12 @@ app_ui = ui.page_fluid(
     ),
 )
 
+DEFAULT_POLICY_FLAGS: dict[str, bool] = {
+    "encryption": True,
+    "public": True,
+    "region": True
+}
+
 
 def server(input: Any, output: Any, session: Any) -> None:
     active_policy_flags: reactive.Value[dict[str, bool]] = reactive.Value({
