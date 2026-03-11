@@ -654,13 +654,13 @@ def server(input: Any, output: Any, session: Any) -> None:
         ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
-    batch_results: reactive.Value[list[dict]] = reactive.Value([])
+    batch_results: reactive.Value[list[dict[str, Any]]] = reactive.Value([])
 
     @reactive.effect
     @reactive.event(input.run_all)
     async def _run_batch() -> None:
         resources = active_resources()
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         violations_all = _violations()
         for resource in resources:
             res_violations = [
@@ -676,7 +676,7 @@ def server(input: Any, output: Any, session: Any) -> None:
                     "mttr_seconds": 0,
                 })
                 continue
-            mttr = 0
+            mttr: float = 0.0
             try:
                 out = await asyncio.to_thread(
                     _run_agents,
@@ -707,7 +707,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         parts = str(sel).split("|", 1)
         rid = parts[0] if len(parts) > 0 else ""
         vtype = parts[1] if len(parts) > 1 else ""
-        agent_result.set(_run_agents(rid, vtype))
+        agent_result.set(_run_agents(rid, vtype, active_resources()))
 
     # Catalogue: server-rendered cards with inline violation details
     @render.ui
@@ -869,7 +869,7 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ui.div("Chart unavailable", style="color: #999; padding: 24px; text-align: center;")
 
     @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
-    async def export_pdf():
+    async def export_pdf():  # type: ignore[no-untyped-def]
         from pdf_report import generate_report
         results = batch_results()
         if not results:
