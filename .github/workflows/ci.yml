@@ -23,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff mypy pytest pytest-cov pip-audit
           pip install -e ".[dev]" 2>/dev/null || pip install -r Artifacts/project/sovereignshield_mobile/requirements.txt
-          pip install chromadb sentence-transformers pandas plotnine 2>/dev/null || true
+          pip install chromadb sentence-transformers pandas plotnine reportlab 2>/dev/null || true
 
       - name: Ruff lint
         run: ruff check Artifacts/project/sovereignshield_mobile/
