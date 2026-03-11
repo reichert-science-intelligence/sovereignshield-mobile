@@ -10,7 +10,6 @@ import io
 import json
 import os
 import re
-import time
 import sys
 from dataclasses import dataclass
 from pathlib import Path
