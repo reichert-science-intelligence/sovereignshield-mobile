@@ -450,6 +450,13 @@ def _intelligence_ui() -> Any:
             ),
             ui.div(ui.output_ui("donut_chart"), class_="ss-card"),
             ui.input_action_button("refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-top: 12px; color: white;"),
+            ui.download_button(
+                "export_pdf",
+                "📄 Export Report",
+                style="background:#4A3E8F; color:white; border:none; "
+                      "padding:10px; border-radius:8px; "
+                      "margin-top:8px; width:100%;"
+            ),
         ),
         _footer(),
     )
@@ -657,10 +664,13 @@ def server(input: Any, output: Any, session: Any) -> None:
             if not res_violations:
                 results.append({
                     "resource_id": resource.resource_id,
+                    "resource_type": resource.resource_type,
                     "verdict": "COMPLIANT",
                     "violations": 0,
+                    "mttr_seconds": 0,
                 })
                 continue
+            mttr = 0
             try:
                 out = await asyncio.to_thread(
                     _run_agents,
@@ -669,12 +679,16 @@ def server(input: Any, output: Any, session: Any) -> None:
                     resources,
                 )
                 verdict = out.get("verdict", "ERROR")
+                mttr = float(out.get("mttr_seconds", 0) or 0)
             except Exception:
                 verdict = "ERROR"
+            verdict_pdf = "COMPLIANT" if verdict == "APPROVED" else verdict
             results.append({
                 "resource_id": resource.resource_id,
-                "verdict": verdict,
+                "resource_type": resource.resource_type,
+                "verdict": verdict_pdf,
                 "violations": len(res_violations),
+                "mttr_seconds": mttr,
             })
         batch_results.set(results)
 
@@ -847,6 +861,39 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ui.img(src=f"data:image/png;base64,{b64}", style="max-width: 100%; height: auto;")
         except Exception:
             return ui.div("Chart unavailable", style="color: #999; padding: 24px; text-align: center;")
+
+    @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
+    async def export_pdf():
+        from pdf_report import generate_report
+        results = batch_results()
+        if not results:
+            resources = active_resources()
+            results = [
+                {
+                    "resource_id": r.resource_id,
+                    "resource_type": r.resource_type,
+                    "verdict": "NOT RUN",
+                    "violations": 0,
+                    "mttr_seconds": 0,
+                }
+                for r in resources
+            ]
+        flags = active_policy_flags()
+        policy_text = (
+            f"Encryption enforced: {flags['encryption']}\n"
+            f"Public access enforced: {flags['public']}\n"
+            f"Region enforced: {flags['region']}"
+        )
+        tf = input.tf_upload()
+        source_filename = (
+            tf[0]["name"] if tf and len(tf) > 0 else "synthetic demo data"
+        )
+        pdf_bytes = generate_report(
+            batch_results=results,
+            policy_text=policy_text,
+            source_filename=source_filename,
+        )
+        yield pdf_bytes
 
 
 app = App(app_ui, server, debug=True)
