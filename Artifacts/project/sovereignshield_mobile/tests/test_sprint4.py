@@ -1,18 +1,20 @@
 """Sprint 4 CI hardening — parse_terraform, generate_report, policy flags."""
+from __future__ import annotations
+
+import json
+import sys
 from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parent.parent
-if str(_root) not in __import__("sys").path:
-    __import__("sys").path.insert(0, str(_root))
+_artifacts = Path(__file__).resolve().parents[3]
+if str(_artifacts) not in sys.path:
+    sys.path.insert(0, str(_artifacts))
 
 
 # 1. parse_terraform — .tfstate parsing
 def test_parse_terraform_tfstate(tmp_path):
     """parse_terraform correctly parses a .tfstate file."""
-    import json
-
     tfstate = {
         "resources": [
             {
@@ -31,7 +33,7 @@ def test_parse_terraform_tfstate(tmp_path):
     }
     f = tmp_path / "main.tfstate"
     f.write_text(json.dumps(tfstate))
-    from app import parse_terraform
+    from project.sovereignshield_mobile.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert len(result) == 1
@@ -44,7 +46,7 @@ def test_parse_terraform_tf(tmp_path):
     tf_content = 'resource "aws_lambda_function" "fn" {\n  runtime = "python3.11"\n}\n'
     f = tmp_path / "main.tf"
     f.write_text(tf_content)
-    from app import parse_terraform
+    from project.sovereignshield_mobile.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert len(result) == 1
@@ -56,7 +58,7 @@ def test_parse_terraform_fallback(tmp_path):
     """parse_terraform returns empty list on bad input."""
     f = tmp_path / "bad.tfstate"
     f.write_text("%%%invalid%%%")
-    from app import parse_terraform
+    from project.sovereignshield_mobile.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert isinstance(result, list)
@@ -65,7 +67,7 @@ def test_parse_terraform_fallback(tmp_path):
 # 4. active_policy_flags — default values
 def test_active_policy_flags_defaults():
     """DEFAULT policy flags all default to True."""
-    from app import DEFAULT_POLICY_FLAGS
+    from project.sovereignshield_mobile.app import DEFAULT_POLICY_FLAGS
 
     assert DEFAULT_POLICY_FLAGS["encryption"] is True
     assert DEFAULT_POLICY_FLAGS["public"] is True
@@ -75,7 +77,7 @@ def test_active_policy_flags_defaults():
 # 5. generate_report — returns PDF bytes
 def test_generate_report_returns_bytes():
     """generate_report returns non-empty PDF bytes."""
-    from pdf_report import generate_report
+    from project.sovereignshield_mobile.pdf_report import generate_report
 
     results = [
         {
@@ -94,7 +96,7 @@ def test_generate_report_returns_bytes():
 # 6. generate_report — PDF magic bytes
 def test_generate_report_pdf_signature():
     """generate_report output is a valid PDF."""
-    from pdf_report import generate_report
+    from project.sovereignshield_mobile.pdf_report import generate_report
 
     pdf_bytes = generate_report([], "policy text", "demo")
     assert pdf_bytes[:4] == b"%PDF"
@@ -103,7 +105,7 @@ def test_generate_report_pdf_signature():
 # 7. generate_report — empty results
 def test_generate_report_empty():
     """generate_report handles empty results gracefully."""
-    from pdf_report import generate_report
+    from project.sovereignshield_mobile.pdf_report import generate_report
 
     pdf_bytes = generate_report([], "", "")
     assert isinstance(pdf_bytes, bytes)
