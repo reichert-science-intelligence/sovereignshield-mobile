@@ -13,7 +13,7 @@ if str(_artifacts) not in sys.path:
 
 
 # 1. parse_terraform — .tfstate parsing
-def test_parse_terraform_tfstate(tmp_path):
+def test_parse_terraform_tfstate(tmp_path: Path) -> None:
     """parse_terraform correctly parses a .tfstate file."""
     tfstate = {
         "resources": [
@@ -41,7 +41,7 @@ def test_parse_terraform_tfstate(tmp_path):
 
 
 # 2. parse_terraform — .tf parsing
-def test_parse_terraform_tf(tmp_path):
+def test_parse_terraform_tf(tmp_path: Path) -> None:
     """parse_terraform correctly parses a .tf file."""
     tf_content = 'resource "aws_lambda_function" "fn" {\n  runtime = "python3.11"\n}\n'
     f = tmp_path / "main.tf"
@@ -54,7 +54,7 @@ def test_parse_terraform_tf(tmp_path):
 
 
 # 3. parse_terraform — invalid file fallback
-def test_parse_terraform_fallback(tmp_path):
+def test_parse_terraform_fallback(tmp_path: Path) -> None:
     """parse_terraform returns empty list on bad input."""
     f = tmp_path / "bad.tfstate"
     f.write_text("%%%invalid%%%")
@@ -65,7 +65,7 @@ def test_parse_terraform_fallback(tmp_path):
 
 
 # 4. active_policy_flags — default values
-def test_active_policy_flags_defaults():
+def test_active_policy_flags_defaults() -> None:
     """DEFAULT policy flags all default to True."""
     from project.sovereignshield_mobile.app import DEFAULT_POLICY_FLAGS
 
@@ -75,7 +75,7 @@ def test_active_policy_flags_defaults():
 
 
 # 5. generate_report — returns PDF bytes
-def test_generate_report_returns_bytes():
+def test_generate_report_returns_bytes() -> None:
     """generate_report returns non-empty PDF bytes."""
     from project.sovereignshield_mobile.pdf_report import generate_report
 
@@ -94,7 +94,7 @@ def test_generate_report_returns_bytes():
 
 
 # 6. generate_report — PDF magic bytes
-def test_generate_report_pdf_signature():
+def test_generate_report_pdf_signature() -> None:
     """generate_report output is a valid PDF."""
     from project.sovereignshield_mobile.pdf_report import generate_report
 
@@ -103,7 +103,7 @@ def test_generate_report_pdf_signature():
 
 
 # 7. generate_report — empty results
-def test_generate_report_empty():
+def test_generate_report_empty() -> None:
     """generate_report handles empty results gracefully."""
     from project.sovereignshield_mobile.pdf_report import generate_report
 
