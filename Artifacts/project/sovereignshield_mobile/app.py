@@ -22,6 +22,7 @@ _USE_REAL_MODULES = True
 try:
     from project.sovereignshield_mobile.core.opa_eval import evaluate, Violation
     from project.sovereignshield_mobile.core.audit_db import db
+    from project.sovereignshield_mobile.core.audit_log import write_run, fetch_history
     from project.sovereignshield_mobile.agents.planner import planner
     from project.sovereignshield_mobile.agents.worker import worker
     from project.sovereignshield_mobile.agents.reviewer import reviewer
@@ -30,6 +31,8 @@ except ImportError:
     _USE_REAL_MODULES = False
     evaluate = None
     db = None
+    write_run = None  # type: ignore[assignment]
+    fetch_history = None  # type: ignore[assignment]
     planner = None
     worker = None
     reviewer = None
@@ -424,6 +427,8 @@ def _agent_loop_ui() -> Any:
                       "width:100%; margin-top:8px;",
             ),
             ui.output_ui("batch_results_panel"),
+            ui.input_action_button("record_run_btn", "📋 Record run", class_="btn-secondary", style="margin-top:8px; width:100%;"),
+            ui.output_ui("record_run_status"),
             ui.output_ui("trace_condensed"),
             ui.output_ui("verdict_line"),
             ui.output_ui("mttr_line"),
@@ -543,6 +548,19 @@ def _about_ui() -> Any:
     )
 
 
+def _history_ui() -> Any:
+    """Sprint 6: Past audit runs — compliance trending."""
+    return ui.div(
+        ui.div("History", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
+        ui.div(
+            ui.input_action_button("history_refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-bottom: 12px; color: white;"),
+            ui.output_ui("record_run_status"),
+            ui.div(ui.output_table("history_table"), class_="ss-card", style="margin-top: 12px; overflow-x: auto;"),
+        ),
+        _footer(),
+    )
+
+
 app_ui = ui.page_fluid(
     ui.tags.head(
         ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=5.0"),
@@ -553,6 +571,7 @@ app_ui = ui.page_fluid(
         ui.nav_panel("Catalogue", _catalogue_ui(), value="catalogue"),
         ui.nav_panel("Agent Loop", _agent_loop_ui(), value="agent"),
         ui.nav_panel("Intelligence", _intelligence_ui(), value="intel"),
+        ui.nav_panel("History", _history_ui(), value="history"),
         ui.nav_panel("About", _about_ui(), value="about"),
     ),
 )
@@ -696,6 +715,11 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "mttr_seconds": mttr,
             })
         batch_results.set(results)
+        # Sprint 6: Persist to Supabase audit_runs + audit_results
+        if results and write_run is not None:
+            tf = input.tf_upload()
+            source_filename = tf[0]["name"] if tf and len(tf) > 0 else ""
+            write_run(batch_results=results, source_filename=source_filename, policy_text="")
 
     @reactive.effect
     @reactive.event(input.run_btn)
@@ -866,6 +890,80 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ui.img(src=f"data:image/png;base64,{b64}", style="max-width: 100%; height: auto;")
         except Exception:
             return ui.div("Chart unavailable", style="color: #999; padding: 24px; text-align: center;")
+
+    # Sprint 6: Record run & History
+    _record_run_msg: reactive.Value[str] = reactive.Value("")
+    history_refresh_trigger: reactive.Value[int] = reactive.Value(0)
+
+    @reactive.effect
+    @reactive.event(input.record_run_btn)
+    def _on_record_run() -> None:
+        results = batch_results()
+        if not results:
+            _record_run_msg.set("No resources to record. Run batch first.")
+            return
+        tf = input.tf_upload()
+        source_filename = tf[0]["name"] if tf and len(tf) > 0 else ""
+        flags = active_policy_flags()
+        policy_text = f"encryption={flags.get('encryption')} public={flags.get('public')} region={flags.get('region')}"
+        run_id = None
+        if write_run is not None:
+            run_id = write_run(batch_results=results, source_filename=source_filename, policy_text=policy_text)
+        if run_id:
+            _record_run_msg.set(f"Run recorded (id: {str(run_id)[:8]}...)")
+            history_refresh_trigger.set(history_refresh_trigger() + 1)
+        else:
+            _record_run_msg.set("Supabase unavailable. Check SUPABASE_URL and SUPABASE_ANON_KEY.")
+
+    @reactive.effect
+    @reactive.event(input.history_refresh_btn)
+    def _on_history_refresh() -> None:
+        history_refresh_trigger.set(history_refresh_trigger() + 1)
+
+    @render.ui
+    def record_run_status() -> Any:
+        msg = _record_run_msg()
+        if not msg:
+            return ui.div()
+        color = "#28a745" if "recorded" in msg.lower() else "#dc3545"
+        return ui.p(msg, style=f"color:{color}; margin:8px 0; font-size:14px;")
+
+    @reactive.calc
+    def _history_runs() -> list[dict[str, Any]]:
+        history_refresh_trigger()
+        if fetch_history is not None:
+            return fetch_history(limit=50)
+        return []
+
+    @render.table
+    def history_table() -> Any:
+        import pandas as pd
+        runs = _history_runs()
+        if not runs:
+            return pd.DataFrame(columns=["run_at", "total", "compliance_rate", "avg_mttr", "trend"])
+        rows = []
+        for r in runs:
+            run_at = r.get("run_at", "")
+            if run_at:
+                try:
+                    if hasattr(run_at, "strftime"):
+                        run_at = run_at.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        run_at = str(run_at)[:19]
+                except Exception:
+                    run_at = str(run_at)[:19]
+            rate = r.get("compliance_rate", 0)
+            mttr = r.get("avg_mttr_seconds", 0) or 0
+            trend = r.get("trending", "stable")
+            arrow = "↑" if trend == "up" else "↓" if trend == "down" else "−"
+            rows.append({
+                "run_at": run_at,
+                "total": r.get("total_resources", 0),
+                "compliance_rate": f"{rate:.1f}%",
+                "avg_mttr": f"{float(mttr):.1f}s",
+                "trend": arrow,
+            })
+        return pd.DataFrame(rows)
 
     @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
     async def export_pdf():  # type: ignore[no-untyped-def]
