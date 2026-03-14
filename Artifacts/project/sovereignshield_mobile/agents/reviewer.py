@@ -163,12 +163,17 @@ class ReviewerAgent:
                 messages=[{"role": "user", "content": user_content}],
             )
         except Exception as e:
+            err = str(e).lower()
+            if "credit" in err or "400" in err or "insufficient" in err:
+                notes = "Agent unavailable — API credits required. Showing synthetic verdict for demo."
+            else:
+                notes = f"Claude call failed: {e!s}"
             return ReviewerResult(
                 task_id=task_id,
                 resource_id=resource_id,
                 violation_type=violation_type,
                 verdict="NEEDS_REVISION",
-                notes=f"Claude call failed: {e!s}",
+                notes=notes,
                 is_compliant=False,
                 mttr_seconds=mttr_seconds,
                 tokens_used=0,

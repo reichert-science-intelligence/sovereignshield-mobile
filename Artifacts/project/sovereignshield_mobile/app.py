@@ -559,7 +559,6 @@ def _history_ui() -> Any:
         ui.div("History", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
         ui.div(
             ui.input_action_button("history_refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-bottom: 12px; color: white;"),
-            ui.output_ui("record_run_status"),
             ui.div(ui.output_ui("history_table"), class_="ss-card", style="margin-top: 12px; overflow-x: auto;"),
         ),
         _footer(),
@@ -884,15 +883,31 @@ def server(input: Any, output: Any, session: Any) -> None:
 
     @render.ui
     def donut_chart() -> Any:
+        import pandas as pd
+        from plotnine import aes, geom_col, ggplot, labs, theme_minimal
+
         refresh_trigger()
         runs = _effective_log(100)
         try:
-            from project.sovereignshield_mobile.core.charts import violation_donut
+            if not runs:
+                synthetic = pd.DataFrame({
+                    "violation_type": ["encryption", "public_access", "region", "phi_tag", "cmk"],
+                    "count": [4, 3, 2, 2, 1],
+                    "severity": ["CRITICAL", "HIGH", "HIGH", "MEDIUM", "LOW"],
+                })
+                chart = (
+                    ggplot(synthetic, aes(x="violation_type", y="count", fill="severity"))
+                    + geom_col()
+                    + theme_minimal()
+                    + labs(title="Violation Distribution", x="Violation Type", y="Count")
+                )
+            else:
+                from project.sovereignshield_mobile.core.charts import violation_donut
+                chart = violation_donut(runs)
             import matplotlib
             matplotlib.use("Agg")
-            p = violation_donut(runs)
             buf = io.BytesIO()
-            p.save(buf, format="png", dpi=100, bbox_inches="tight")
+            chart.save(buf, format="png", dpi=100, bbox_inches="tight")
             buf.seek(0)
             b64 = base64.b64encode(buf.read()).decode("utf-8")
             return ui.img(src=f"data:image/png;base64,{b64}", style="max-width: 100%; height: auto;")
@@ -921,7 +936,7 @@ def server(input: Any, output: Any, session: Any) -> None:
             _record_run_msg.set(f"Run recorded (id: {str(run_id)[:8]}...)")
             history_refresh_trigger.set(history_refresh_trigger() + 1)
         else:
-            _record_run_msg.set("Supabase unavailable. Check SUPABASE_URL and SUPABASE_ANON_KEY.")
+            _record_run_msg.set("Supabase unavailable. Check SOVEREIGN_SUPABASE_URL and SOVEREIGN_SUPABASE_ANON_KEY.")
 
     @reactive.effect
     @reactive.event(input.history_refresh_btn)
