@@ -349,15 +349,20 @@ _AVATAR_SRC: str = _load_avatar()
 
 
 def _load_qr(filename: str) -> str:
-    """Load base64 PNG from assets/*.b64.txt. Handles whitespace, newlines, data URI prefix."""
+    """Load base64 image from assets/*.b64.txt. Handles whitespace, MIME detection."""
     try:
         assets_dir = os.path.join(os.path.dirname(__file__), "assets")
         path = os.path.join(assets_dir, filename)
         with open(path, "r") as f:
-            data = f.read().strip().replace("\n", "").replace("\r", "")
-        if not data.startswith("data:"):
-            data = f"data:image/png;base64,{data}"
-        return data
+            raw = f.read()
+        b64 = "".join(raw.split())  # strip all whitespace/newlines
+        if not b64 or b64.startswith("data:"):
+            return b64
+        if b64.startswith("/9j/"):
+            return f"data:image/jpeg;base64,{b64}"
+        if b64.startswith("iVBORw0KGgo"):
+            return f"data:image/png;base64,{b64}"
+        return f"data:image/png;base64,{b64}"  # fallback
     except Exception:
         return ""
 
@@ -512,7 +517,7 @@ def _about_ui() -> Any:
                     ui.div(app.name, style="font-weight: 600; margin-bottom: 4px;"),
                     ui.div(app.description, style="font-size: 13px; color: #666; margin-bottom: 4px;"),
                     ui.a(app.url, href=app.url, target="_blank", style="font-size: 12px; margin-bottom: 8px; display: block;"),
-                    ui.img(src=_load_qr(app.qr_file), style="height: 80px; width: 80px;", alt=app.name) if _load_qr(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
+                    ui.img(src=_load_qr(app.qr_file), style="width:80px; height:80px; object-fit:contain;", alt=app.name) if _load_qr(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
                     class_="ss-card",
                     style="margin-bottom: 12px;",
                 )
