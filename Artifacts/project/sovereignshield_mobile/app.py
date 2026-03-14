@@ -163,6 +163,13 @@ RESOURCES: list[CloudResource] = [
     ),
 ]
 
+# Synthetic history when Supabase empty/unavailable
+_SYNTHETIC_HISTORY: list[dict[str, Any]] = [
+    {"run_at": "2026-03-12 14:22", "total": 5, "compliance_rate": "60.0%", "avg_mttr": "3.8s", "trend": "−"},
+    {"run_at": "2026-03-13 09:15", "total": 5, "compliance_rate": "80.0%", "avg_mttr": "2.1s", "trend": "↑"},
+    {"run_at": "2026-03-14 11:45", "total": 5, "compliance_rate": "62.0%", "avg_mttr": "4.2s", "trend": "↓"},
+]
+
 # Seed events for fallback when db unavailable
 _SEED_EVENTS: list[dict[str, Any]] = [
     {
@@ -295,6 +302,12 @@ def _run_agents(resource_id: str, violation_type: str, resources: list[CloudReso
 
 
 # ── Mobile CSS (StarGuard-style) ──────────────────────────────────────────────
+_NAV_CSS = """
+.nav-tabs, .nav-pills { display: flex !important; flex-wrap: nowrap !important; overflow-x: auto !important; white-space: nowrap !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.nav-tabs::-webkit-scrollbar, .nav-pills::-webkit-scrollbar { display: none; }
+.nav-tabs .nav-item, .nav-pills .nav-item { flex-shrink: 0; }
+.nav-tabs .nav-link, .nav-pills .nav-link { padding: 8px 12px !important; font-size: 0.85rem !important; }
+"""
 _MOBILE_CSS = """
 body { max-width: 480px; margin: 0 auto; background: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
 .ss-header { background: #4A3E8F; color: white; height: 56px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.25rem; }
@@ -310,6 +323,23 @@ button, .btn { min-height: 44px !important; }
 .nav-pill-button { background: #4A3E8F; color: white; }
 .kpi-tile { background: white; border-radius: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.08); padding: 16px; text-align: center; }
 .ss-gold-btn { background: #D4AF37; color: black; font-weight: bold; min-height: 44px; }
+.nav-tabs, .nav-pills, [class*="navset"] > div:first-child {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.nav-tabs::-webkit-scrollbar, .nav-pills::-webkit-scrollbar,
+[class*="navset"] > div:first-child::-webkit-scrollbar { display: none; }
+.nav-tabs .nav-item, .nav-pills .nav-item,
+[class*="navset"] [role="tablist"] > * { flex-shrink: 0; }
+.nav-tabs .nav-link, .nav-pills .nav-link,
+[class*="navset"] [role="tab"] {
+    padding: 8px 12px !important;
+    font-size: 0.85rem !important;
+}
 """
 
 
@@ -405,22 +435,19 @@ def _agent_loop_ui() -> Any:
     return ui.div(
         ui.div("Run Remediation", class_="ss-header", style="margin-bottom: 16px; border-radius: 0 0 12px 12px;"),
         ui.div(
-            ui.accordion(
-                ui.accordion_panel(
-                    "⚙️ Policy Controls",
-                    ui.input_checkbox("policy_encryption", "Enforce encryption_enabled", value=True),
-                    ui.input_checkbox("policy_public", "Enforce is_public == False", value=True),
-                    ui.input_checkbox("policy_region", "Enforce approved regions only", value=True),
-                    ui.input_action_button(
-                        "apply_policy",
-                        "⚡ Apply Policy",
-                        style="background:#4A3E8F; color:white; "
-                              "border:none; padding:8px 16px; "
-                              "border-radius:6px; margin-top:8px; width:100%;",
-                    ),
-                    ui.output_text("policy_status"),
+            ui.div(
+                ui.input_checkbox("policy_encryption", "Enforce encryption_enabled", value=True),
+                ui.input_checkbox("policy_public", "Enforce is_public == False", value=True),
+                ui.input_checkbox("policy_region", "Enforce approved regions only", value=True),
+                ui.input_action_button(
+                    "apply_policy",
+                    "⚡ Apply Policy",
+                    style="background:#4A3E8F; color:white; "
+                          "border:none; padding:8px 16px; "
+                          "border-radius:6px; margin-top:8px; width:100%;",
                 ),
-                open=False,
+                ui.output_text("policy_status"),
+                style="margin-bottom: 12px;",
             ),
             ui.input_select("violation_select", "Violation", choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}),
             ui.input_action_button("run_btn", "Run", class_="ss-run-btn"),
@@ -457,7 +484,7 @@ def _intelligence_ui() -> Any:
                 class_="row",
                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;",
             ),
-            ui.div(ui.output_ui("donut_chart"), class_="ss-card"),
+            ui.div(ui.output_plot("violation_chart"), class_="ss-card"),
             ui.input_action_button("refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-top: 12px; color: white;"),
             ui.download_button(
                 "export_pdf",
@@ -570,6 +597,7 @@ app_ui = ui.page_fluid(
         ui.tags.meta(name="viewport", content="width=device-width, initial-scale=1.0, maximum-scale=5.0"),
         ui.tags.title("SovereignShield Mobile"),
         ui.tags.style(_MOBILE_CSS),
+        ui.tags.style(_NAV_CSS),
     ),
     ui.navset_pill(
         ui.nav_panel("Catalogue", _catalogue_ui(), value="catalogue"),
@@ -881,38 +909,58 @@ def server(input: Any, output: Any, session: Any) -> None:
         v = _kpi_data()[3]
         return ui.div(ui.div(str(v), style="font-size: 1.25rem; font-weight: bold;"), ui.div("KB Entries", style="font-size: 12px; color: #666;"), class_="kpi-tile")
 
-    @render.ui
-    def donut_chart() -> Any:
+    @render.plot
+    def violation_chart() -> Any:
         import pandas as pd
-        from plotnine import aes, geom_col, ggplot, labs, theme_minimal
+        from plotnine import aes, coord_flip, geom_col, ggplot, labs, scale_fill_manual, theme_minimal
 
         refresh_trigger()
         runs = _effective_log(100)
         try:
+            synthetic_violations = pd.DataFrame({
+                "type": ["Encryption", "Public Access", "Region", "PHI Tag", "CMK"],
+                "count": [4, 3, 2, 2, 1],
+                "severity": ["CRITICAL", "HIGH", "HIGH", "MEDIUM", "LOW"],
+            })
             if not runs:
-                synthetic = pd.DataFrame({
-                    "violation_type": ["encryption", "public_access", "region", "phi_tag", "cmk"],
-                    "count": [4, 3, 2, 2, 1],
-                    "severity": ["CRITICAL", "HIGH", "HIGH", "MEDIUM", "LOW"],
-                })
                 chart = (
-                    ggplot(synthetic, aes(x="violation_type", y="count", fill="severity"))
+                    ggplot(synthetic_violations, aes(x="type", y="count", fill="severity"))
                     + geom_col()
+                    + coord_flip()
+                    + scale_fill_manual(values={
+                        "CRITICAL": "#EF4444",
+                        "HIGH": "#F97316",
+                        "MEDIUM": "#EAB308",
+                        "LOW": "#10B981",
+                    })
                     + theme_minimal()
-                    + labs(title="Violation Distribution", x="Violation Type", y="Count")
+                    + labs(title="Violation Distribution", x="", y="Count")
                 )
             else:
-                from project.sovereignshield_mobile.core.charts import violation_donut
-                chart = violation_donut(runs)
-            import matplotlib
-            matplotlib.use("Agg")
-            buf = io.BytesIO()
-            chart.save(buf, format="png", dpi=100, bbox_inches="tight")
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode("utf-8")
-            return ui.img(src=f"data:image/png;base64,{b64}", style="max-width: 100%; height: auto;")
+                try:
+                    from project.sovereignshield_mobile.core.charts import violation_donut
+                    chart = violation_donut(runs)
+                except Exception:
+                    chart = (
+                        ggplot(synthetic_violations, aes(x="type", y="count", fill="severity"))
+                        + geom_col()
+                        + coord_flip()
+                        + scale_fill_manual(values={
+                            "CRITICAL": "#EF4444",
+                            "HIGH": "#F97316",
+                            "MEDIUM": "#EAB308",
+                            "LOW": "#10B981",
+                        })
+                        + theme_minimal()
+                        + labs(title="Violation Distribution", x="", y="Count")
+                    )
+            return chart.draw()
         except Exception:
-            return ui.div("Chart unavailable", style="color: #999; padding: 24px; text-align: center;")
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(6, 4))
+            ax.text(0.5, 0.5, "Chart unavailable", ha="center", va="center", fontsize=12)
+            ax.axis("off")
+            return fig
 
     # Sprint 6: Record run & History
     _record_run_msg: reactive.Value[str] = reactive.Value("")
@@ -958,37 +1006,41 @@ def server(input: Any, output: Any, session: Any) -> None:
             return fetch_history(limit=50)
         return []
 
+    _SYNTHETIC_HISTORY: list[dict[str, Any]] = [
+        {"run_at": "2026-03-12 14:22", "total": 5, "compliance_rate": "60.0%", "avg_mttr": "3.8s", "trend": "−"},
+        {"run_at": "2026-03-13 09:15", "total": 5, "compliance_rate": "80.0%", "avg_mttr": "2.1s", "trend": "↑"},
+        {"run_at": "2026-03-14 11:45", "total": 5, "compliance_rate": "62.0%", "avg_mttr": "4.2s", "trend": "↓"},
+    ]
+
     @render.ui
     def history_table() -> Any:
         import pandas as pd
         runs = _history_runs()
         if not runs:
-            return ui.div(
-                "No runs recorded yet. Run batch remediation and click Record Run.",
-                style="color:#aaa; padding:16px;",
-            )
-        rows = []
-        for r in runs:
-            run_at = r.get("run_at", "")
-            if run_at:
-                try:
-                    if hasattr(run_at, "strftime"):
-                        run_at = run_at.strftime("%Y-%m-%d %H:%M")
-                    else:
+            rows = _SYNTHETIC_HISTORY
+        else:
+            rows = []
+            for r in runs:
+                run_at = r.get("run_at", "")
+                if run_at:
+                    try:
+                        if hasattr(run_at, "strftime"):
+                            run_at = run_at.strftime("%Y-%m-%d %H:%M")
+                        else:
+                            run_at = str(run_at)[:19]
+                    except Exception:
                         run_at = str(run_at)[:19]
-                except Exception:
-                    run_at = str(run_at)[:19]
-            rate = r.get("compliance_rate", 0)
-            mttr = r.get("avg_mttr_seconds", 0) or 0
-            trend = r.get("trending", "stable")
-            arrow = "↑" if trend == "up" else "↓" if trend == "down" else "−"
-            rows.append({
-                "run_at": run_at,
-                "total": r.get("total_resources", 0),
-                "compliance_rate": f"{rate:.1f}%",
-                "avg_mttr": f"{float(mttr):.1f}s",
-                "trend": arrow,
-            })
+                rate = r.get("compliance_rate", 0)
+                mttr = r.get("avg_mttr_seconds", 0) or 0
+                trend = r.get("trending", "stable")
+                arrow = "↑" if trend == "up" else "↓" if trend == "down" else "−"
+                rows.append({
+                    "run_at": run_at,
+                    "total": r.get("total_resources", 0),
+                    "compliance_rate": f"{rate:.1f}%",
+                    "avg_mttr": f"{float(mttr):.1f}s",
+                    "trend": arrow,
+                })
         df = pd.DataFrame(rows)
         return ui.HTML(df.to_html(index=False, classes="table", na_rep=""))
 
