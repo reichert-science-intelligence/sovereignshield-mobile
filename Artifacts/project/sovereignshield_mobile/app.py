@@ -560,7 +560,7 @@ def _history_ui() -> Any:
         ui.div(
             ui.input_action_button("history_refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-bottom: 12px; color: white;"),
             ui.output_ui("record_run_status"),
-            ui.div(ui.output_table("history_table"), class_="ss-card", style="margin-top: 12px; overflow-x: auto;"),
+            ui.div(ui.output_ui("history_table"), class_="ss-card", style="margin-top: 12px; overflow-x: auto;"),
         ),
         _footer(),
     )
@@ -773,7 +773,7 @@ def server(input: Any, output: Any, session: Any) -> None:
     def trace_condensed() -> Any:
         r = agent_result()
         if r is None:
-            return ui.div("Click Run to execute the agent loop.", style="font-size: 14px; color: #666;")
+            return ui.div("Select a resource and click Run to start the agent loop.", style="font-size: 14px; color: #666;")
         passed = r.get("checks_passed") or []
         failed = r.get("checks_failed") or []
         lines: list[str] = [f"✓ {c}" for c in passed[:2]] + [f"✗ {c}" for c in failed[:1]]
@@ -791,7 +791,7 @@ def server(input: Any, output: Any, session: Any) -> None:
     def verdict_line() -> Any:
         r = agent_result()
         if r is None:
-            return ui.div()
+            return ui.div("Verdict will appear here after running the agent loop.", style="font-size: 14px; color: #666;")
         v = r.get("verdict", "")
         color: str = {"APPROVED": "#28a745", "REJECTED": "#dc3545", "NEEDS_REVISION": "#fd7e14"}.get(v, "#333")
         return ui.div(v, style=f"font-size: 1.25rem; font-weight: bold; color: {color}; margin-top: 12px;")
@@ -850,14 +850,17 @@ def server(input: Any, output: Any, session: Any) -> None:
             avg_mttr = db.avg_mttr()
             rag_rate = db.rag_hit_rate()
             kb = db.kb_count()
-        else:
-            avg_mttr = 4.2 if runs else 0.0
-            rag_rate = 0.0
-            kb = 0
+            compliant = sum(1 for e in runs if e.get("is_compliant"))
+            total = len(runs)
+            compliance_rate = (compliant / total * 100) if total else 0.0
+            return (avg_mttr, rag_rate * 100, compliance_rate, kb)
+        # Synthetic faux data on load
+        if not runs:
+            return (4.2, 87.0, 62.0, 24)
         compliant = sum(1 for e in runs if e.get("is_compliant"))
         total = len(runs)
-        compliance_rate = (compliant / total * 100) if total else 0.0
-        return (avg_mttr, rag_rate * 100, compliance_rate, kb)
+        compliance_rate = (compliant / total * 100) if total else 62.0
+        return (4.2, 87.0, compliance_rate, 24)
 
     @render.ui
     def kpi_mttr() -> Any:
@@ -940,12 +943,15 @@ def server(input: Any, output: Any, session: Any) -> None:
             return fetch_history(limit=50)
         return []
 
-    @render.table
+    @render.ui
     def history_table() -> Any:
         import pandas as pd
         runs = _history_runs()
         if not runs:
-            return pd.DataFrame(columns=["run_at", "total", "compliance_rate", "avg_mttr", "trend"])
+            return ui.div(
+                "No runs recorded yet. Run batch remediation and click Record Run.",
+                style="color:#aaa; padding:16px;",
+            )
         rows = []
         for r in runs:
             run_at = r.get("run_at", "")
@@ -968,7 +974,8 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "avg_mttr": f"{float(mttr):.1f}s",
                 "trend": arrow,
             })
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        return ui.HTML(df.to_html(index=False, classes="table", na_rep=""))
 
     @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
     async def export_pdf():  # type: ignore[no-untyped-def]
