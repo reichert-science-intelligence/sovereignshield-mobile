@@ -484,7 +484,7 @@ def _intelligence_ui() -> Any:
                 class_="row",
                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;",
             ),
-            ui.div(ui.output_plot("violation_chart"), class_="ss-card"),
+            ui.div(ui.output_ui("violation_chart"), class_="ss-card"),
             ui.input_action_button("refresh_btn", "Refresh", class_="btn nav-pill-button", style="width: 100%; margin-top: 12px; color: white;"),
             ui.download_button(
                 "export_pdf",
@@ -909,58 +909,46 @@ def server(input: Any, output: Any, session: Any) -> None:
         v = _kpi_data()[3]
         return ui.div(ui.div(str(v), style="font-size: 1.25rem; font-weight: bold;"), ui.div("KB Entries", style="font-size: 12px; color: #666;"), class_="kpi-tile")
 
-    @render.plot
-    def violation_chart() -> Any:
-        import pandas as pd
-        from plotnine import aes, coord_flip, geom_col, ggplot, labs, scale_fill_manual, theme_minimal
-
-        refresh_trigger()
-        runs = _effective_log(100)
+    @render.ui
+    def violation_chart():
         try:
-            synthetic_violations = pd.DataFrame({
-                "type": ["Encryption", "Public Access", "Region", "PHI Tag", "CMK"],
-                "count": [4, 3, 2, 2, 1],
-                "severity": ["CRITICAL", "HIGH", "HIGH", "MEDIUM", "LOW"],
-            })
-            if not runs:
-                chart = (
-                    ggplot(synthetic_violations, aes(x="type", y="count", fill="severity"))
-                    + geom_col()
-                    + coord_flip()
-                    + scale_fill_manual(values={
-                        "CRITICAL": "#EF4444",
-                        "HIGH": "#F97316",
-                        "MEDIUM": "#EAB308",
-                        "LOW": "#10B981",
-                    })
-                    + theme_minimal()
-                    + labs(title="Violation Distribution", x="", y="Count")
-                )
-            else:
-                try:
-                    from project.sovereignshield_mobile.core.charts import violation_donut
-                    chart = violation_donut(runs)
-                except Exception:
-                    chart = (
-                        ggplot(synthetic_violations, aes(x="type", y="count", fill="severity"))
-                        + geom_col()
-                        + coord_flip()
-                        + scale_fill_manual(values={
-                            "CRITICAL": "#EF4444",
-                            "HIGH": "#F97316",
-                            "MEDIUM": "#EAB308",
-                            "LOW": "#10B981",
-                        })
-                        + theme_minimal()
-                        + labs(title="Violation Distribution", x="", y="Count")
-                    )
-            return chart.draw()
-        except Exception:
+            import matplotlib
+            matplotlib.use("Agg")
             import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(6, 4))
-            ax.text(0.5, 0.5, "Chart unavailable", ha="center", va="center", fontsize=12)
-            ax.axis("off")
-            return fig
+            import io, base64
+
+            types = ["Encryption", "Public Access", "Region",
+                     "PHI Tag", "CMK"]
+            counts = [4, 3, 2, 2, 1]
+            colors = ["#EF4444", "#F97316", "#F97316",
+                      "#EAB308", "#10B981"]
+
+            fig, ax = plt.subplots(figsize=(5, 3))
+            ax.barh(types, counts, color=colors)
+            ax.set_xlabel("Count")
+            ax.set_title("Violation Distribution")
+            ax.set_facecolor("#1A1633")
+            fig.set_facecolor("#1A1633")
+            ax.tick_params(colors="white")
+            ax.title.set_color("white")
+            ax.xaxis.label.set_color("white")
+            plt.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png",
+                        facecolor="#1A1633", bbox_inches="tight")
+            plt.close(fig)
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode()
+            return ui.HTML(
+                f'<img src="data:image/png;base64,{b64}" '
+                f'style="width:100%; border-radius:8px;">'
+            )
+        except Exception as e:
+            return ui.div(
+                f"Chart error: {str(e)}",
+                style="color:#aaa; padding:16px;"
+            )
 
     # Sprint 6: Record run & History
     _record_run_msg: reactive.Value[str] = reactive.Value("")
