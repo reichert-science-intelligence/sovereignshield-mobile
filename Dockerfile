@@ -16,7 +16,7 @@ COPY Artifacts/ .
 RUN pip install --no-cache-dir \
     gotrue==1.3.0 \
     httpcore==0.16.3 \
-    httpx==0.23.3 \
+    httpx==0.24.0 \
     anyio==3.7.1 \
     python-dotenv==1.0.0 \
     supabase==2.3.0
