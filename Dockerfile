@@ -25,6 +25,7 @@ RUN pip install --no-cache-dir \
     -r project/sovereignshield_mobile/requirements.txt
 
 RUN pip install --no-cache-dir \
+    "numpy<2.0" \
     chromadb sentence-transformers pandas plotnine
 
 RUN mkdir -p /tmp/chroma_db

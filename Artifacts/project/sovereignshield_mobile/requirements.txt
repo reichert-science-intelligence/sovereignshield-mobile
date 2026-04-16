@@ -1,4 +1,5 @@
 # SovereignShield — HuggingFace Space / local
+numpy<2.0             # ChromaDB <0.5 uses np.float_ (removed in NumPy 2); sovereignshield-mobile HF Space
 shiny>=1.0.0
 matplotlib>=3.8.0
 anthropic>=0.39.0
