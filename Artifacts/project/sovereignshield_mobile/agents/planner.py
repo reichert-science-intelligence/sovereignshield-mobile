@@ -115,9 +115,9 @@ class PlannerAgent:
             )
 
         try:
-            from anthropic import Anthropic
+            from ._anthropic_client import get_anthropic_client
 
-            client = Anthropic()
+            client = get_anthropic_client()
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=1024,

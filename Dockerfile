@@ -14,12 +14,6 @@ WORKDIR /app/Artifacts
 COPY Artifacts/ .
 
 RUN pip install --no-cache-dir \
-    gotrue==1.3.0 \
-    httpx==0.25.2 \
-    python-dotenv==1.0.0 \
-    supabase==2.3.0
-
-RUN pip install --no-cache-dir \
     -r project/sovereignshield_mobile/requirements.txt
 
 RUN pip install --no-cache-dir \
