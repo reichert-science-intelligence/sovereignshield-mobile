@@ -50,6 +50,12 @@ except ImportError:
 
 from datetime import datetime
 
+# S17-02-A: Cross-app findings telemetry (fire-and-forget)
+try:
+    from sovereignshield_platform_integration import record_finding as _record_cross_app_finding
+except Exception:
+    _record_cross_app_finding = None
+
 # Full 5-resource catalogue (same as desktop)
 
 
@@ -971,6 +977,18 @@ def server(input: Any, output: Any, session: Any) -> None:
         if run_id:
             _record_run_msg.set(f"Run recorded (id: {str(run_id)[:8]}...)")
             history_refresh_trigger.set(history_refresh_trigger() + 1)
+            # S17-02-A: Mirror the run as a cross-app finding (fire-and-forget)
+            if _record_cross_app_finding is not None:
+                try:
+                    _record_cross_app_finding(
+                        finding_type="audit_run",
+                        title="Mobile audit run recorded",
+                        description=f"Mobile audit run {str(run_id)[:8]} recorded with {len(results)} resources from {source_filename or 'unspecified source'}",
+                        severity="info",
+                        session_id=None,
+                    )
+                except Exception:
+                    pass  # Fire-and-forget; never break UI on telemetry failure
         else:
             _record_run_msg.set("Supabase unavailable. Check SOVEREIGN_SUPABASE_URL and SOVEREIGN_SUPABASE_ANON_KEY.")
 
